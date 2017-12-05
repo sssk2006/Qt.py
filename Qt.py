@@ -1353,7 +1353,8 @@ def _convert(lines):
     """
 
     def parse(line):
-        line = line.replace("from PySide2 import", "from Qt import QtCompat,")
+        line = line.replace("from PySide2 import", "import Qt\nfrom Qt import QtCompat,")
+        line = line.replace("from PySide import", "from Qt import QtCompat,")
         line = line.replace("QtWidgets.QApplication.translate",
                             "QtCompat.translate")
         if "QtCore.SIGNAL" in line:

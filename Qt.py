@@ -43,7 +43,7 @@ import types
 import shutil
 
 
-__version__ = "1.1.0.b7"
+__version__ = "1.1.0.b10"
 
 # Enable support for `from Qt import *`
 __all__ = []
@@ -69,7 +69,8 @@ This is where each member of Qt.py is explicitly defined.
 It is based on a "lowest common denominator" of all bindings;
 including members found in each of the 4 bindings.
 
-Find or add excluded members in build_membership.py
+The "_common_members" dictionary is generated using the
+build_membership.sh script.
 
 """
 
@@ -219,6 +220,7 @@ _common_members = {
         "QConicalGradient",
         "QContextMenuEvent",
         "QCursor",
+        "QDesktopServices",
         "QDoubleValidator",
         "QDrag",
         "QDragEnterEvent",
@@ -347,6 +349,17 @@ _common_members = {
         "QHelpSearchQueryWidget",
         "QHelpSearchResultWidget"
     ],
+    "QtMultimedia": [
+        "QAbstractVideoBuffer",
+        "QAbstractVideoSurface",
+        "QAudio",
+        "QAudioDeviceInfo",
+        "QAudioFormat",
+        "QAudioInput",
+        "QAudioOutput",
+        "QVideoFrame",
+        "QVideoSurfaceFormat"
+    ],
     "QtNetwork": [
         "QAbstractNetworkCache",
         "QAbstractSocket",
@@ -374,6 +387,12 @@ _common_members = {
         "QTcpServer",
         "QTcpSocket",
         "QUdpSocket"
+    ],
+    "QtOpenGL": [
+        "QGL",
+        "QGLContext",
+        "QGLFormat",
+        "QGLWidget"
     ],
     "QtSql": [
         "QSql",
@@ -687,7 +706,6 @@ _misplaced_members = {
         "QtCore.Signal": "QtCore.Signal",
         "QtCore.Slot": "QtCore.Slot",
         "QtGui.QItemSelectionRange": "QtCore.QItemSelectionRange",
-
     },
     "PyQt4": {
         "QtGui.QAbstractProxyModel": "QtCore.QAbstractProxyModel",
@@ -1009,6 +1027,7 @@ def _pyside2():
 
     if hasattr(Qt, "_QtCore"):
         Qt.__qt_version__ = Qt._QtCore.qVersion()
+        Qt.QtCompat.qInstallMessageHandler = _qInstallMessageHandler
         Qt.QtCompat.translate = Qt._QtCore.QCoreApplication.translate
 
     if hasattr(Qt, "_QtWidgets"):
@@ -1060,6 +1079,7 @@ def _pyside():
     if hasattr(Qt, "_QtCore"):
         Qt.__qt_version__ = Qt._QtCore.qVersion()
         QCoreApplication = Qt._QtCore.QCoreApplication
+        Qt.QtCompat.qInstallMessageHandler = _qInstallMessageHandler
         Qt.QtCompat.translate = (
             lambda context, sourceText, disambiguation, n:
             QCoreApplication.translate(
@@ -1099,6 +1119,7 @@ def _pyqt5():
     if hasattr(Qt, "_QtCore"):
         Qt.__binding_version__ = Qt._QtCore.PYQT_VERSION_STR
         Qt.__qt_version__ = Qt._QtCore.QT_VERSION_STR
+        Qt.QtCompat.qInstallMessageHandler = _qInstallMessageHandler
         Qt.QtCompat.translate = Qt._QtCore.QCoreApplication.translate
 
     if hasattr(Qt, "_QtWidgets"):
@@ -1177,8 +1198,8 @@ def _pyqt4():
     if hasattr(Qt, "_QtCore"):
         Qt.__binding_version__ = Qt._QtCore.PYQT_VERSION_STR
         Qt.__qt_version__ = Qt._QtCore.QT_VERSION_STR
-
         QCoreApplication = Qt._QtCore.QCoreApplication
+        Qt.QtCompat.qInstallMessageHandler = _qInstallMessageHandler
         Qt.QtCompat.translate = (
             lambda context, sourceText, disambiguation, n:
             QCoreApplication.translate(
@@ -1256,10 +1277,6 @@ def _loadUi(uifile, baseinstance=None):
         return the newly created instance of the user interface.
 
     """
-    if hasattr(baseinstance, "layout") and baseinstance.layout():
-        message = ("QLayout: Attempting to add Layout to %s which "
-                   "already has a layout")
-        raise RuntimeError(message % (baseinstance))
 
     if hasattr(Qt, "_uic"):
         return Qt._uic.loadUi(uifile, baseinstance)
@@ -1338,6 +1355,43 @@ def _loadUi(uifile, baseinstance=None):
 
     else:
         raise NotImplementedError("No implementation available for loadUi")
+
+
+def _qInstallMessageHandler(handler):
+    """Install a message handler that works in all bindings
+
+    Args:
+        handler: A function that takes 3 arguments, or None
+    """
+    def messageOutputHandler(*args):
+        # In Qt4 bindings, message handlers are passed 2 arguments
+        # In Qt5 bindings, message handlers are passed 3 arguments
+        # The first argument is a QtMsgType
+        # The last argument is the message to be printed
+        # The Middle argument (if passed) is a QMessageLogContext
+        if len(args) == 3:
+            msgType, logContext, msg = args
+        elif len(args) == 2:
+            msgType, msg = args
+            logContext = None
+        else:
+            raise TypeError(
+                "handler expected 2 or 3 arguments, got {0}".format(len(args)))
+
+        if isinstance(msg, bytes):
+            # In python 3, some bindings pass a bytestring, which cannot be
+            # used elsewhere. Decoding a python 2 or 3 bytestring object will
+            # consistently return a unicode object.
+            msg = msg.decode()
+
+        handler(msgType, logContext, msg)
+
+    passObject = messageOutputHandler if handler else handler
+    if Qt.IsPySide or Qt.IsPyQt4:
+        return Qt._QtCore.qInstallMsgHandler(passObject)
+    elif Qt.IsPySide2 or Qt.IsPyQt5:
+        return Qt._QtCore.qInstallMessageHandler(passObject)
+
 
 
 def _convert(lines):
@@ -1492,6 +1546,9 @@ def _install():
                 continue
 
             setattr(our_submodule, member, their_member)
+
+    # Enable direct import of QtCompat
+    sys.modules['Qt.QtCompat'] = Qt.QtCompat
 
     # Backwards compatibility
     if hasattr(Qt.QtCompat, 'loadUi'):

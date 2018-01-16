@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import subprocess
 import contextlib
+import datetime
 
 # Third-party dependency
 import six
@@ -24,6 +25,21 @@ except NameError:
     long = int
 
 
+def _pyside2_commit_date():
+    """Return the commit date of PySide2"""
+
+    import PySide2
+    if hasattr(PySide2, '__build_commit_date__'):
+        commit_date = PySide2.__build_commit_date__
+        datetime_object = datetime.datetime.strptime(
+            commit_date[: commit_date.rfind('+')], '%Y-%m-%dT%H:%M:%S'
+        )
+        return datetime_object
+    else:
+        # Returns None if no __build_commit_date__ is available
+        return None
+
+
 @contextlib.contextmanager
 def captured_output():
     new_out, new_err = six.StringIO(), six.StringIO()
@@ -38,19 +54,7 @@ def captured_output():
 self = sys.modules[__name__]
 
 
-def setup():
-    """Module-wide initialisation
-
-    This function runs once, followed by teardown() below once
-    all tests have completed.
-
-    """
-
-    self.tempdir = tempfile.mkdtemp()
-    self.ui_qwidget = os.path.join(self.tempdir, "qwidget.ui")
-
-    with io.open(self.ui_qwidget, "w", encoding="utf-8") as f:
-        f.write(u"""\
+qwidget_ui = u"""\
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>Form</class>
@@ -102,8 +106,116 @@ def setup():
   </connection>
  </connections>
 </ui>
-""")
+"""
 
+
+qmainwindow_ui = u"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>238</width>
+    <height>44</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QLineEdit" name="lineEdit"/>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+"""
+
+
+qdialog_ui = u"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Dialog</class>
+ <widget class="QDialog" name="Dialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>186</width>
+    <height>38</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Dialog</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLineEdit" name="lineEdit"/>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+"""
+
+
+qdockwidget_ui = u"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>DockWidget</class>
+ <widget class="QDockWidget" name="DockWidget">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>169</width>
+    <height>60</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>DockWidget</string>
+  </property>
+  <widget class="QWidget" name="dockWidgetContents">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QLineEdit" name="lineEdit"/>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+"""
+
+
+def setup():
+    """Module-wide initialisation
+
+    This function runs once, followed by teardown() below once
+    all tests have completed.
+
+    """
+    self.tempdir = tempfile.mkdtemp()
+
+    def saveUiFile(filename, ui_template):
+        filename = os.path.join(self.tempdir, filename)
+        with io.open(filename, "w", encoding="utf-8") as f:
+            f.write(ui_template)
+        return filename
+
+    self.ui_qwidget = saveUiFile("qwidget.ui", qwidget_ui)
+    self.ui_qmainwindow = saveUiFile("qmainwindow.ui", qmainwindow_ui)
+    self.ui_qdialog = saveUiFile("qdialog.ui", qdialog_ui)
+    self.ui_qdockwidget = saveUiFile("qdockwidget.ui", qdockwidget_ui)
 
 def teardown():
     shutil.rmtree(self.tempdir)
@@ -120,6 +232,27 @@ def binding(binding):
     """
 
     return os.getenv("QT_PREFERRED_BINDING") == binding
+
+
+@contextlib.contextmanager
+def ignoreQtMessageHandler(msgs):
+    """A context that ignores specific qMessages for all bindings
+
+    Args:
+        msgs: list of message strings to ignore
+    """
+    from Qt import QtCompat
+
+    def messageOutputHandler(msgType, logContext, msg):
+        if msg in msgs:
+            return
+        sys.stderr.write("{0}\n".format(msg))
+
+    QtCompat.qInstallMessageHandler(messageOutputHandler)
+    try:
+        yield
+    finally:
+        QtCompat.qInstallMessageHandler(None)
 
 
 def test_environment():
@@ -145,7 +278,7 @@ def test_load_ui_returntype():
 
 
 def test_load_ui_baseinstance():
-    """Tests to see if the baseinstance loading loads widgets on properly"""
+    """Tests to see if the baseinstance loading loads a QWidget on properly"""
     import sys
     from Qt import QtWidgets, QtCompat
     app = QtWidgets.QApplication(sys.argv)
@@ -156,7 +289,7 @@ def test_load_ui_baseinstance():
 
 
 def test_load_ui_signals():
-    """Tests to see if the baseinstance loading loads widgets on properly"""
+    """Tests to see if the baseinstance connects signals properly"""
     import sys
     from Qt import QtWidgets, QtCompat
     app = QtWidgets.QApplication(sys.argv)
@@ -165,6 +298,54 @@ def test_load_ui_signals():
 
     win.lineEdit.setText('Hello')
     assert str(win.label.text()) == 'Hello', "lineEdit signal did not fire"
+
+    app.exit()
+
+
+def test_load_ui_mainwindow():
+    """Tests to see if the baseinstance loading loads a QMainWindow properly"""
+    import sys
+    from Qt import QtWidgets, QtCompat
+
+    app = QtWidgets.QApplication(sys.argv)
+    win = QtWidgets.QMainWindow()
+
+    QtCompat.loadUi(self.ui_qmainwindow, win)
+
+    assert hasattr(win, 'lineEdit'), \
+        "loadUi could not load instance to main window"
+
+    app.exit()
+
+
+def test_load_ui_dialog():
+    """Tests to see if the baseinstance loading loads a QDialog properly"""
+    import sys
+    from Qt import QtWidgets, QtCompat
+
+    app = QtWidgets.QApplication(sys.argv)
+    win = QtWidgets.QDialog()
+
+    QtCompat.loadUi(self.ui_qdialog, win)
+
+    assert hasattr(win, 'lineEdit'), \
+        "loadUi could not load instance to main window"
+
+    app.exit()
+
+
+def test_load_ui_dockwidget():
+    """Tests to see if the baseinstance loading loads a QDockWidget properly"""
+    import sys
+    from Qt import QtWidgets, QtCompat
+
+    app = QtWidgets.QApplication(sys.argv)
+    win = QtWidgets.QDockWidget()
+
+    QtCompat.loadUi(self.ui_qdockwidget, win)
+
+    assert hasattr(win, 'lineEdit'), \
+        "loadUi could not load instance to main window"
 
     app.exit()
 
@@ -196,18 +377,71 @@ def test_load_ui_invalidxml():
     app.exit()
 
 
-def test_load_ui_overwrite_fails():
-    """PyQt4/5 loadUi functiion will fail if the widget has a preexisting
-    layout. This tests that our custom implementation for PySide does the same
-    """
+def test_load_ui_existingLayoutOnDialog():
+    """Tests to see if loading a ui onto a layout in a Dialog works"""
     import sys
     from Qt import QtWidgets, QtCompat
-    app = QtWidgets.QApplication(sys.argv)
-    win = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(win)
-    win.lineEdit = QtWidgets.QPushButton('Test')
-    layout.addWidget(win.lineEdit)
-    assert_raises(RuntimeError, QtCompat.loadUi, self.ui_qwidget, win)
+
+    msgs = 'QLayout: Attempting to add QLayout "" to QDialog ' \
+        '"Dialog", which already has a layout'
+
+    with ignoreQtMessageHandler([msgs]):
+        app = QtWidgets.QApplication(sys.argv)
+        win = QtWidgets.QDialog()
+        QtWidgets.QComboBox(win)
+        QtWidgets.QHBoxLayout(win)
+        QtCompat.loadUi(self.ui_qdialog, win)
+    app.exit()
+
+
+def test_load_ui_existingLayoutOnMainWindow():
+    """Tests to see if loading a ui onto a layout in a MainWindow works"""
+    import sys
+    from Qt import QtWidgets, QtCompat
+
+    msgs = 'QLayout: Attempting to add QLayout "" to QMainWindow ' \
+        '"", which already has a layout'
+
+    with ignoreQtMessageHandler([msgs]):
+        app = QtWidgets.QApplication(sys.argv)
+        win = QtWidgets.QMainWindow()
+        QtWidgets.QComboBox(win)
+        QtWidgets.QHBoxLayout(win)
+        QtCompat.loadUi(self.ui_qmainwindow, win)
+    app.exit()
+
+
+def test_load_ui_existingLayoutOnDockWidget():
+    """Tests to see if loading a ui onto a layout in a DockWidget works"""
+    import sys
+    from Qt import QtWidgets, QtCompat
+
+    msgs = 'QLayout: Attempting to add QLayout "" to QDockWidget ' \
+        '"", which already has a layout'
+
+    with ignoreQtMessageHandler([msgs]):
+        app = QtWidgets.QApplication(sys.argv)
+        win = QtWidgets.QDockWidget()
+        QtWidgets.QComboBox(win)
+        QtWidgets.QHBoxLayout(win)
+        QtCompat.loadUi(self.ui_qdockwidget, win)
+    app.exit()
+
+
+def test_load_ui_existingLayoutOnWidget():
+    """Tests to see if loading a ui onto a layout in a Widget works"""
+    import sys
+    from Qt import QtWidgets, QtCompat
+
+    msgs = 'QLayout: Attempting to add QLayout "" to QWidget ' \
+        '"Form", which already has a layout'
+
+    with ignoreQtMessageHandler([msgs]):
+        app = QtWidgets.QApplication(sys.argv)
+        win = QtWidgets.QWidget()
+        QtWidgets.QComboBox(win)
+        QtWidgets.QHBoxLayout(win)
+        QtCompat.loadUi(self.ui_qwidget, win)
     app.exit()
 
 
@@ -372,6 +606,12 @@ def test_import_from_qtwidgets():
     assert QPushButton.__name__ == "QPushButton", QPushButton
 
 
+def test_import_from_qtcompat():
+    """ `from Qt.QtCompat import XXX` works """
+    from Qt.QtCompat import loadUi
+    assert loadUi.__name__ == "_loadUi", loadUi
+
+
 def test_i158_qtcore_direct_import():
     """import Qt.QtCore works on all bindings
 
@@ -456,11 +696,19 @@ def test_cli():
 
 
 def test_membership():
-    """All members of Qt.py exist in all bindings"""
+    """Common members of Qt.py exist in all bindings, excl exceptions"""
     import Qt
 
+    common_members = Qt._common_members.copy()
+
+    if os.environ.get('VFXPLATFORM') == '2017':
+        # For CY2017, skip the following
+        common_members['QtGui'].remove('QDesktopServices')
+        common_members.pop('QtOpenGL', None)
+        common_members.pop('QtMultimedia', None)
+
     missing = list()
-    for module, members in Qt._common_members.items():
+    for module, members in common_members.items():
         missing.extend(
             member for member in members
             if not hasattr(getattr(Qt, module), member)
@@ -516,8 +764,14 @@ if sys.version_info <= (3, 4):
             assert isinstance(widget, QtWidgets.QWidget), widget
             assert widget.objectName() == button.objectName()
 
-            if binding("PySide") or binding("PySide2"):
+            if binding("PySide"):
                 assert widget != button
+            elif binding("PySide2") and _pyside2_commit_date() is None:
+                assert widget != button
+            elif binding("PySide2") and \
+                    _pyside2_commit_date() <= datetime.datetime(
+                        2017, 8, 25):
+                assert widget == button
             else:
                 assert widget == button
 
